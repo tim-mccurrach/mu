@@ -596,6 +596,7 @@ class PythonProcessPane(QTextEdit):
     """
 
     on_append_text = pyqtSignal(bytes)
+    read_from_buffer = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -611,6 +612,9 @@ class PythonProcessPane(QTextEdit):
         self.input_history = []  # history of inputs entered in this session.
         self.start_of_current_line = 0  # start position of the input line.
         self.history_position = 0  # current position when navigation history.
+        self.buffer = b''
+        self.read_from_buffer.connect(self.read_from_stdout,
+                                      type=Qt.QueuedConnection)
 
     def start_process(self, script_name, working_directory, interactive=True,
                       debugger=False, command_args=None, envars=None,
@@ -915,12 +919,23 @@ class PythonProcessPane(QTextEdit):
         """
         Process incoming data from the process's stdout.
         """
-        data = self.process.read(256)
-        if data:
-            self.append(data)
-            self.on_append_text.emit(data)
-            cursor = self.textCursor()
-            self.start_of_current_line = cursor.position()
+        self.buffer += self.process.readAll().data()
+        if self.buffer:
+            data, self.buffer = self.buffer[:256], self.buffer[256:]
+            newline_index = self.buffer.find(b"\n")
+            if not newline_index == -1:
+                data += self.buffer[:newline_index + 1]
+                self.buffer = self.buffer[newline_index + 1:]
+            else:
+                data += self.buffer
+                self.buffer = b''
+            if data:
+                self.append(data)
+                self.on_append_text.emit(data)
+                cursor = self.textCursor()
+                self.start_of_current_line = cursor.position()
+            if self.buffer:
+                self.read_from_buffer.emit()
 
     def write_to_stdin(self, data):
         """
